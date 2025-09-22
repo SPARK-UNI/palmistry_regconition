@@ -2,7 +2,8 @@ import os, io, json
 import numpy as np
 from PIL import Image
 from flask import Flask, request, jsonify, send_from_directory
-import keras
+import tensorflow as tf
+from tensorflow import keras
 from scripts.rule_engine import interpret
 
 IMG_SIZE = 128
@@ -10,7 +11,7 @@ BASE = os.path.dirname(os.path.abspath(__file__))
 MODEL_DIR = os.path.join(BASE,"model")
 WEB_DIR   = os.path.join(BASE,"web")
 
-model = keras.models.load_model(os.path.join(MODEL_DIR,"model.h5"))
+model = keras.models.load_model(os.path.join(MODEL_DIR, "model.h5"))
 LABELS = [l.strip() for l in open(os.path.join(MODEL_DIR,"labels.txt"),"r",encoding="utf-8").read().splitlines() if l.strip()]
 ATTR_CFG = json.load(open(os.path.join(MODEL_DIR,"attr_config.json"),"r",encoding="utf-8"))
 

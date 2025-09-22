@@ -1,95 +1,132 @@
-// DOM elements
+// DOM Elements
 const uploadArea = document.getElementById('uploadArea');
 const fileInput = document.getElementById('fileInput');
 const uploadBtn = document.getElementById('uploadBtn');
 const cameraBtn = document.getElementById('cameraBtn');
+const previewContainer = document.getElementById('previewContainer');
 const previewImage = document.getElementById('previewImage');
 const analyzeBtn = document.getElementById('analyzeBtn');
 const loading = document.getElementById('loading');
 const resultContent = document.getElementById('resultContent');
-const lineOptions = document.querySelectorAll('.line-option');
+const lineItems = document.querySelectorAll('.line-item');
 const cameraModal = document.getElementById('cameraModal');
 const cameraVideo = document.getElementById('cameraVideo');
 const cameraCanvas = document.getElementById('cameraCanvas');
 const captureBtn = document.getElementById('captureBtn');
 const closeCameraBtn = document.getElementById('closeCameraBtn');
 
-// Global variables
+// Global State
 let selectedLine = 'life';
 let currentFile = null;
 let cameraStream = null;
 
-// Initialize event listeners
+// Event Listeners
 function initializeEventListeners() {
-    // Upload area events
+    // Upload Events
     uploadArea.addEventListener('click', () => fileInput.click());
     uploadBtn.addEventListener('click', () => fileInput.click());
 
-    uploadArea.addEventListener('dragover', (e) => {
-        e.preventDefault();
-        uploadArea.classList.add('dragover');
+    uploadArea.addEventListener('dragover', handleDragOver);
+    uploadArea.addEventListener('dragleave', handleDragLeave);
+    uploadArea.addEventListener('drop', handleDrop);
+    fileInput.addEventListener('change', handleFileSelect);
+
+    // Line Selection
+    lineItems.forEach(item => {
+        item.addEventListener('click', () => selectLine(item));
     });
 
-    uploadArea.addEventListener('dragleave', () => {
-        uploadArea.classList.remove('dragover');
-    });
-
-    uploadArea.addEventListener('drop', (e) => {
-        e.preventDefault();
-        uploadArea.classList.remove('dragover');
-        const files = e.dataTransfer.files;
-        if (files.length > 0) {
-            handleFile(files[0]);
-        }
-    });
-
-    fileInput.addEventListener('change', (e) => {
-        if (e.target.files[0]) {
-            handleFile(e.target.files[0]);
-        }
-    });
-
-    // Line selection events
-    lineOptions.forEach(option => {
-        option.addEventListener('click', () => {
-            lineOptions.forEach(opt => opt.classList.remove('selected'));
-            option.classList.add('selected');
-            selectedLine = option.dataset.line;
-        });
-    });
-
-    // Camera functionality
+    // Camera
     cameraBtn.addEventListener('click', openCamera);
     closeCameraBtn.addEventListener('click', closeCamera);
     captureBtn.addEventListener('click', capturePhoto);
 
-    // Analyze button
+    // Analysis
     analyzeBtn.addEventListener('click', analyzeHand);
+
+    // Modal Click Outside
+    cameraModal.addEventListener('click', (e) => {
+        if (e.target === cameraModal) closeCamera();
+    });
 }
 
-// File handling functions
-function handleFile(file) {
+// File Handling
+function handleDragOver(e) {
+    e.preventDefault();
+    uploadArea.classList.add('dragover');
+}
+
+function handleDragLeave(e) {
+    e.preventDefault();
+    uploadArea.classList.remove('dragover');
+}
+
+function handleDrop(e) {
+    e.preventDefault();
+    uploadArea.classList.remove('dragover');
+    const files = e.dataTransfer.files;
+    if (files.length > 0) {
+        processFile(files[0]);
+    }
+}
+
+function handleFileSelect(e) {
+    if (e.target.files[0]) {
+        processFile(e.target.files[0]);
+    }
+}
+
+function processFile(file) {
+    // Validate file type
     if (!file.type.startsWith('image/')) {
-        showAlert('Vui lòng chọn file ảnh!', 'error');
+        showNotification('Vui lòng chọn file ảnh hợp lệ!', 'error');
         return;
     }
 
+    // Validate file size (10MB limit)
     if (file.size > 10 * 1024 * 1024) {
-        showAlert('File quá lớn! Vui lòng chọn ảnh dưới 10MB.', 'error');
+        showNotification('File quá lớn! Vui lòng chọn ảnh dưới 10MB.', 'error');
         return;
     }
 
     currentFile = file;
+    displayImagePreview(file);
+    analyzeBtn.disabled = false;
+}
+
+function displayImagePreview(file) {
     const reader = new FileReader();
     reader.onload = (e) => {
         previewImage.src = e.target.result;
-        previewImage.style.display = 'block';
-        analyzeBtn.disabled = false;
+        previewContainer.style.display = 'block';
+        
+        // Add smooth reveal animation
+        previewContainer.style.opacity = '0';
+        previewContainer.style.transform = 'translateY(20px)';
+        
+        setTimeout(() => {
+            previewContainer.style.transition = 'all 0.5s ease';
+            previewContainer.style.opacity = '1';
+            previewContainer.style.transform = 'translateY(0)';
+        }, 100);
     };
     reader.readAsDataURL(file);
 }
 
-// Camera functions
+// Line Selection
+function selectLine(selectedItem) {
+    lineItems.forEach(item => item.classList.remove('selected'));
+    selectedItem.classList.add('selected');
+    selectedLine = selectedItem.dataset.line;
+    
+    // Add subtle animation
+    selectedItem.style.transform = 'scale(0.98)';
+    setTimeout(() => {
+        selectedItem.style.transform = 'scale(1)';
+    }, 150);
+}
+
+// Camera Functions
 async function openCamera() {
     try {
         cameraStream = await navigator.mediaDevices.getUserMedia({ 
@@ -99,10 +136,23 @@ async function openCamera() {
                 facingMode: 'user'
             } 
         });
+        
         cameraVideo.srcObject = cameraStream;
         cameraModal.style.display = 'flex';
+        
+        // Animate modal entrance
+        const wrapper = cameraModal.querySelector('.camera-wrapper');
+        wrapper.style.transform = 'scale(0.9) translateY(20px)';
+        wrapper.style.opacity = '0';
+        
+        setTimeout(() => {
+            wrapper.style.transition = 'all 0.3s ease';
+            wrapper.style.transform = 'scale(1) translateY(0)';
+            wrapper.style.opacity = '1';
+        }, 100);
+        
     } catch (error) {
-        showAlert('Không thể mở camera: ' + error.message, 'error');
+        showNotification('Không thể mở camera: ' + error.message, 'error');
     }
 }
 
@@ -111,7 +161,15 @@ function closeCamera() {
         cameraStream.getTracks().forEach(track => track.stop());
         cameraStream = null;
     }
-    cameraModal.style.display = 'none';
+    
+    const wrapper = cameraModal.querySelector('.camera-wrapper');
+    wrapper.style.transform = 'scale(0.9) translateY(20px)';
+    wrapper.style.opacity = '0';
+    
+    setTimeout(() => {
+        cameraModal.style.display = 'none';
+        wrapper.style.transition = 'none';
+    }, 300);
 }
 
 function capturePhoto() {
@@ -124,34 +182,33 @@ function capturePhoto() {
     context.drawImage(cameraVideo, 0, 0);
     
     canvas.toBlob((blob) => {
-        const file = new File([blob], 'camera-photo.jpg', { type: 'image/jpeg' });
-        handleFile(file);
+        const file = new File([blob], 'palm-photo.jpg', { type: 'image/jpeg' });
+        processFile(file);
         closeCamera();
-    }, 'image/jpeg', 0.8);
+    }, 'image/jpeg', 0.9);
 }
 
-// Analysis functions
+// Analysis Functions
 async function analyzeHand() {
     if (!currentFile) return;
 
-    showLoading(true);
-
+    showLoadingState(true);
+    
     try {
-        // Simulate API call with realistic delay
+        // Simulate analysis with realistic delay
         await simulateAnalysis();
-        
-        const predictions = generatePrediction(selectedLine);
-        displayResults(predictions);
+        const prediction = generatePrediction(selectedLine);
+        displayPrediction(prediction);
     } catch (error) {
-        showAlert('Có lỗi xảy ra trong quá trình phân tích: ' + error.message, 'error');
+        showNotification('Có lỗi xảy ra trong quá trình phân tích: ' + error.message, 'error');
     } finally {
-        showLoading(false);
+        showLoadingState(false);
     }
 }
 
 function simulateAnalysis() {
     return new Promise(resolve => {
-        const delay = 2000 + Math.random() * 2000; // 2-4 seconds
+        const delay = 2500 + Math.random() * 2000; // 2.5-4.5 seconds
         setTimeout(resolve, delay);
     });
 }
@@ -159,9 +216,9 @@ function simulateAnalysis() {
 function generatePrediction(lineType) {
     const predictions = {
         life: {
-            title: '🌱 Đường Sống - Sức Khỏe & Tuổi Thọ',
-            confidence: Math.random() * 20 + 75,
-            content: [
+            title: '🌿 Đường Sống - Sức Khỏe & Tuổi Thọ',
+            confidence: Math.random() * 20 + 78,
+            insights: [
                 'Bạn có một đường sống khá rõ nét và dài, báo hiệu sức khỏe tốt và tuổi thọ cao.',
                 'Giai đoạn 30-40 tuổi sẽ là thời kỳ phát triển mạnh về sức khỏe.',
                 'Nên chú ý đến việc tập thể dục đều đặn và ăn uống lành mạnh.',
@@ -173,9 +230,9 @@ function generatePrediction(lineType) {
             ]
         },
         heart: {
-            title: '❤️ Đường Tình - Tình Yêu & Cảm Xúc',
-            confidence: Math.random() * 15 + 80,
-            content: [
+            title: '💖 Đường Tình - Tình Yêu & Cảm Xúc',
+            confidence: Math.random() * 15 + 82,
+            insights: [
                 'Đường cảm xúc của bạn khá phức tạp, cho thấy một tâm hồn giàu cảm xúc.',
                 'Bạn sẽ trải qua 2-3 mối tình nghiêm túc trong đời.',
                 'Tuổi 25-30 là thời điểm tìm được tình yêu đích thực.',
@@ -189,8 +246,8 @@ function generatePrediction(lineType) {
         },
         head: {
             title: '🧠 Đường Trí - Trí Tuệ & Sự Nghiệp',
-            confidence: Math.random() * 25 + 70,
-            content: [
+            confidence: Math.random() * 25 + 72,
+            insights: [
                 'Bạn có trí tuệ tốt và khả năng phân tích logic cao.',
                 'Sự nghiệp sẽ có bước phát triển vượt bậc ở tuổi 35.',
                 'Phù hợp với các ngành liên quan đến công nghệ, tài chính hoặc giáo dục.',
@@ -203,14 +260,14 @@ function generatePrediction(lineType) {
             ]
         },
         fate: {
-            title: '🌟 Đường Vận Mệnh - Số Phận & Tương Lai',
-            confidence: Math.random() * 30 + 65,
-            content: [
+            title: '⭐ Đường Vận Mệnh - Số Phận & Tương Lai',
+            confidence: Math.random() * 30 + 68,
+            insights: [
                 'Vận mệnh của bạn có nhiều thăng trầm nhưng tổng thể là tích cực.',
                 'Giai đoạn 28-35 tuổi sẽ có những cơ hội lớn thay đổi cuộc đời.',
                 'May mắn sẽ đến với bạn vào những thời điểm bạn ít mong đợi nhất.',
                 'Gia đình và bạn bè sẽ là nguồn hỗ trợ lớn trong cuộc đời.',
-                'Hãy tin tưởng vào trực giác của mình, nó thường đúng.',
+                'Hãy tin tương vào trực giác của mình, nó thường đúng.',
                 'Tuổi già sẽ được tận hưởng thành quả của sự nỗ lực bền bỉ.',
                 'Có khả năng đạt được địa vị xã hội cao và được nhiều người kính trọng.',
                 'Số phận bạn gắn liền với việc giúp đỡ người khác.',
@@ -220,137 +277,203 @@ function generatePrediction(lineType) {
         }
     };
 
-    // Chọn ngẫu nhiên 1 câu duy nhất từ mảng content
     const predictionData = predictions[lineType];
-    const randomIndex = Math.floor(Math.random() * predictionData.content.length);
+    const randomInsight = predictionData.insights[Math.floor(Math.random() * predictionData.insights.length)];
     
     return {
         title: predictionData.title,
         confidence: predictionData.confidence,
-        content: predictionData.content[randomIndex] // Chỉ trả về 1 câu
+        insight: randomInsight
     };
 }
 
-function displayResults(prediction) {
+function displayPrediction(prediction) {
     const adviceTexts = [
         'Hãy nhớ rằng tương lai được tạo nên bởi những hành động của bạn hôm nay.',
         'Sử dụng những thông tin này như một nguồn cảm hứng tích cực để phát triển bản thân!',
         'Tương lai luôn có thể thay đổi tùy thuộc vào nỗ lực và quyết tâm của bạn.',
-        'Hãy tận dụng những điểm mạnh và cải thiện những điểm yếu để có cuộc sống tốt hơn.'
+        'Hãy tận dụng những điểm mạnh và cải thiện những điểm yếu để có cuộc sống tốt hơn.',
+        'Tin tưởng vào bản thân và theo đuổi những ước mơ của mình.',
+        'Mỗi thách thức đều là cơ hội để bạn trở nên mạnh mẽ hơn.'
     ];
     
     const randomAdvice = adviceTexts[Math.floor(Math.random() * adviceTexts.length)];
 
     resultContent.innerHTML = `
         <div class="prediction-card">
-            <h4 class="prediction-title">${prediction.title}</h4>
+            <h3 class="prediction-title">${prediction.title}</h3>
+            
             <div class="confidence-bar">
-                <div class="confidence-fill" style="width: ${prediction.confidence}%"></div>
+                <div class="confidence-fill" style="width: 0%"></div>
             </div>
-            <p style="text-align: right; font-size: 0.9rem; margin-bottom: 15px; opacity: 0.8;">
-                Độ tin cậy: ${prediction.confidence.toFixed(1)}%
+            <p style="text-align: right; font-size: 0.9rem; margin-bottom: 1.5rem; color: #6b7280;">
+                Độ tin cậy: <strong>${prediction.confidence.toFixed(1)}%</strong>
             </p>
-            <div class="prediction-text" style="margin-bottom: 15px; font-size: 1.1rem; line-height: 1.8; padding: 15px; background: rgba(255, 255, 255, 0.05); border-radius: 10px;">
-                ${prediction.content}
+            
+            <div class="prediction-text">
+                ${prediction.insight}
             </div>
         </div>
         
-        <div style="margin-top: 20px; padding: 15px; background: rgba(255, 216, 155, 0.1); border-radius: 10px; border: 1px solid rgba(255, 216, 155, 0.3);">
-            <h5 style="color: #ffd89b; margin-bottom: 10px;">🔮 Lời khuyên từ AI:</h5>
-            <p style="font-style: italic; opacity: 0.9;">
+        <div style="background: linear-gradient(135deg, #10b98120 0%, #059669 20); border: 1px solid #d1fae5; border-radius: 12px; padding: 1.5rem; margin-top: 1.5rem;">
+            <h4 style="color: #065f46; margin-bottom: 0.75rem; display: flex; align-items: center; gap: 0.5rem;">
+                <span>✨</span> Lời khuyên từ AI
+            </h4>
+            <p style="color: #047857; font-style: italic; line-height: 1.6; margin: 0;">
                 ${randomAdvice}
             </p>
         </div>
         
-        <div style="margin-top: 15px; text-align: center;">
-            <button class="btn" id="newPredictionBtn" onclick="analyzeHand()" style="background: linear-gradient(45deg, #ff9a9e, #fecfef);">
-                🎲 Dự đoán khác
+        <div style="text-align: center; margin-top: 1.5rem;">
+            <button class="btn btn-primary" onclick="analyzeHand()" style="background: linear-gradient(135deg, #8b5cf6, #a855f7); box-shadow: 0 4px 14px rgba(139, 92, 246, 0.3);">
+                <span class="btn-icon">🔮</span>
+                Dự đoán mới
             </button>
         </div>
     `;
+    
+    // Animate confidence bar
+    setTimeout(() => {
+        const confidenceFill = document.querySelector('.confidence-fill');
+        if (confidenceFill) {
+            confidenceFill.style.width = prediction.confidence.toFixed(1) + '%';
+        }
+    }, 500);
 }
 
-// Utility functions
-function showLoading(show) {
+// UI State Management
+function showLoadingState(show) {
     if (show) {
         loading.style.display = 'block';
         resultContent.style.display = 'none';
+        
+        // Animate loading entrance
+        loading.style.opacity = '0';
+        loading.style.transform = 'translateY(20px)';
+        setTimeout(() => {
+            loading.style.transition = 'all 0.5s ease';
+            loading.style.opacity = '1';
+            loading.style.transform = 'translateY(0)';
+        }, 100);
     } else {
-        loading.style.display = 'none';
-        resultContent.style.display = 'block';
+        loading.style.opacity = '0';
+        setTimeout(() => {
+            loading.style.display = 'none';
+            resultContent.style.display = 'block';
+            
+            // Animate results entrance
+            resultContent.style.opacity = '0';
+            resultContent.style.transform = 'translateY(20px)';
+            setTimeout(() => {
+                resultContent.style.transition = 'all 0.5s ease';
+                resultContent.style.opacity = '1';
+                resultContent.style.transform = 'translateY(0)';
+            }, 100);
+        }, 500);
     }
 }
 
-function showAlert(message, type = 'info') {
-    // Simple alert for now - can be enhanced with custom modal
-    alert(message);
+// Notification System
+function showNotification(message, type = 'info') {
+    const notification = document.createElement('div');
+    notification.className = `notification notification-${type}`;
+    notification.innerHTML = `
+        <div class="notification-content">
+            <span class="notification-icon">${type === 'error' ? '⚠️' : 'ℹ️'}</span>
+            <span class="notification-message">${message}</span>
+        </div>
+    `;
+    
+    // Add notification styles
+    notification.style.cssText = `
+        position: fixed;
+        top: 20px;
+        right: 20px;
+        background: ${type === 'error' ? '#fef2f2' : '#eff6ff'};
+        color: ${type === 'error' ? '#dc2626' : '#1d4ed8'};
+        border: 1px solid ${type === 'error' ? '#fecaca' : '#bfdbfe'};
+        border-radius: 12px;
+        padding: 1rem 1.5rem;
+        box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1);
+        z-index: 1001;
+        transform: translateX(400px);
+        transition: transform 0.3s ease;
+        max-width: 300px;
+    `;
+    
+    document.body.appendChild(notification);
+    
+    // Animate in
+    setTimeout(() => {
+        notification.style.transform = 'translateX(0)';
+    }, 100);
+    
+    // Auto remove
+    setTimeout(() => {
+        notification.style.transform = 'translateX(400px)';
+        setTimeout(() => {
+            document.body.removeChild(notification);
+        }, 300);
+    }, 4000);
 }
 
-// Animation functions
+// Smooth Animations
 function initializeAnimations() {
-    const cards = document.querySelectorAll('.card');
+    const cards = document.querySelectorAll('.upload-card, .results-card');
     cards.forEach((card, index) => {
         card.style.opacity = '0';
         card.style.transform = 'translateY(30px)';
         setTimeout(() => {
-            card.style.transition = 'all 0.6s ease';
+            card.style.transition = 'all 0.8s cubic-bezier(0.4, 0, 0.2, 1)';
             card.style.opacity = '1';
             card.style.transform = 'translateY(0)';
-        }, index * 200);
+        }, index * 200 + 300);
     });
 }
 
-// API integration (for future use)
-async function callPredictionAPI(file, lineType) {
-    const formData = new FormData();
-    formData.append('file', file);
-    formData.append('line_type', lineType);
-
-    try {
-        const response = await fetch('/api/predict', {
-            method: 'POST',
-            body: formData
-        });
-
-        if (!response.ok) {
-            throw new Error(`HTTP error! status: ${response.status}`);
-        }
-
-        const data = await response.json();
-        return data;
-    } catch (error) {
-        console.error('API call failed:', error);
-        throw error;
+// Lifecycle Management
+function handleVisibilityChange() {
+    if (document.hidden && cameraStream) {
+        closeCamera();
     }
 }
 
-// Initialize app
+function handleWindowResize() {
+    // Handle responsive adjustments if needed
+    if (window.innerWidth < 768 && cameraStream) {
+        // Adjust camera settings for mobile if needed
+    }
+}
+
+// Initialize Application
 document.addEventListener('DOMContentLoaded', () => {
     initializeEventListeners();
     initializeAnimations();
     
-    // Set initial result content
-    resultContent.style.display = 'block';
+    // Set initial state
+    showLoadingState(false);
+    
+    // Add smooth scroll behavior
+    document.documentElement.style.scrollBehavior = 'smooth';
 });
 
-// Handle page visibility change to clean up camera
-document.addEventListener('visibilitychange', () => {
-    if (document.hidden && cameraStream) {
+// Event Listeners for Lifecycle
+document.addEventListener('visibilitychange', handleVisibilityChange);
+window.addEventListener('resize', handleWindowResize);
+
+// Keyboard Navigation
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && cameraModal.style.display === 'flex') {
         closeCamera();
     }
 });
 
-// Handle window resize
-window.addEventListener('resize', () => {
-    // Handle responsive behavior if needed
-});
-
-// Export functions for testing (if needed)
+// Export for testing (Node.js environment)
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = {
-        handleFile,
+        processFile,
         generatePrediction,
-        showLoading,
-        initializeEventListeners
+        showLoadingState,
+        selectLine
     };
 }

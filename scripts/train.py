@@ -1,182 +1,280 @@
-import os, glob, csv, json, random
+import os
 import numpy as np
-from PIL import Image
-import keras
-from keras import layers
+import pickle
+import json
+from tensorflow import keras
 import tensorflow as tf
+from tensorflow.keras import Sequential
+from tensorflow.keras.layers import Dense
+from tensorflow.keras.optimizers import Adam
+from tensorflow.keras.utils import to_categorical
+from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint
+import matplotlib.pyplot as plt
 
-TF_ENABLE_ONEDNN_OPTS=0
-gpus = tf.config.list_physical_devices('GPU')
-if gpus:
+# Configure GPU settings
+def setup_gpu():
+    print("Setting up GPU configuration...")
+    print("TF:", tf.__version__)
+    print("Built with CUDA:", tf.test.is_built_with_cuda())
+    print("CUDA available (runtime):", tf.test.is_built_with_gpu_support())
+    print("Physical devices:", tf.config.list_physical_devices())
+    gpus = tf.config.list_physical_devices('GPU')
+    if not gpus:
+        print(">> No GPU visible to TensorFlow.")
+        return False
     try:
-        # tránh chiếm full VRAM
         for gpu in gpus:
             tf.config.experimental.set_memory_growth(gpu, True)
-        tf.config.set_visible_devices(gpus[0], 'GPU')  # chọn GPU:0
-        # Tùy chọn: mixed precision để nhanh hơn (nếu GPU hỗ trợ Tensor Cores)
-        from keras import mixed_precision
-        mixed_precision.set_global_policy('mixed_float16')
-        print("[GPU] Using:", gpus[0])
-    except Exception as e:
-        print("[GPU] Could not enable GPU properly:", e)
+        print(f">> Using GPU: {gpus}")
+        return True
+    except RuntimeError as e:
+        print("GPU setup error:", e)
+        return False
 
-# ====== CẤU HÌNH MẶC ĐỊNH ======
-DATA_ROOT = "data/processed"     # nơi converter đã sinh crops + attrs_*.csv
-OUT_DIR   = "model"              # nơi lưu model và config
-IMG_SIZE  = 128
-EPOCHS    = 30
-BATCH     = 32
-CLS_NAMES = ["life","heart","head","fate"]  # nhãn đường
 
-# Ngưỡng bucket mặc định cho các thuộc tính (có thể chỉnh)
-LEN_THRESH  = (0.45, 0.70)       # length_norm: <0.45 short; 0.45-0.70 medium; >0.70 long
-SLOPE_THR   = (-10.0, 10.0)      # slope_deg: < -10 down; -10..10 flat; >10 up
-CURV_THR    = (8.0, 20.0)        # curv_deg: <8 low; 8..20 med; >20 high
-
-SEED = 42
-random.seed(SEED); np.random.seed(SEED); tf.random.set_seed(SEED)
-
-def _bucket_length(x: float) -> int:
-    a, b = LEN_THRESH
-    return 0 if x < a else (1 if x < b else 2)
-
-def _bucket_slope(x: float) -> int:
-    a, b = SLOPE_THR
-    return 0 if x < a else (1 if x <= b else 2)
-
-def _bucket_curv(x: float) -> int:
-    a, b = CURV_THR
-    return 0 if x < a else (1 if x <= b else 2)
-
-def _bucket_breaks(n: int) -> int:
-    return 0 if n == 0 else (1 if n == 1 else 2)
-
-def load_images_and_attrs(split_name: str):
-    """Đọc ảnh ROI + thuộc tính từ CSV attrs_split.csv"""
-    split_dir = os.path.join(DATA_ROOT, split_name)
-    csv_path  = os.path.join(DATA_ROOT, f"attrs_{split_name}.csv")
-    if not (os.path.isdir(split_dir) and os.path.exists(csv_path)):
-        return (np.array([]),) * 6  # X, y_line, y_len, y_slope, y_curv, y_breaks rỗng
-
-    # Map crop_path -> row
-    attrs = {}
-    with open(csv_path, "r", encoding="utf-8") as f:
-        r = csv.DictReader(f)
-        for row in r:
-            # chuẩn hoá path để khớp hệ điều hành
-            p = os.path.normpath(row["crop_path"])
-            attrs[p] = row
-
-    X=[]; y_line=[]; y_len=[]; y_slope=[]; y_curv=[]; y_breaks=[]
-    for lbl in CLS_NAMES:
-        for fp in glob.glob(os.path.join(split_dir, lbl, "*")):
-            key = os.path.normpath(fp)
-            if key not in attrs:
-                # Bỏ qua nếu CSV không có record—an toàn.
-                continue
-            # ảnh → xám → resize → [0,1] → flatten
-            im = Image.open(fp).convert("L").resize((IMG_SIZE, IMG_SIZE))
-            arr = np.asarray(im, dtype=np.float32)/255.0
-            X.append(arr.flatten())
-
-            row = attrs[key]
-            # loại đường (phòng trường hợp folder sai label -> dùng CSV)
-            lt = row.get("label", lbl).strip().lower()
-            y_line.append(CLS_NAMES.index(lt))
-
-            # bucket thuộc tính
-            y_len.append(_bucket_length(float(row["length_norm"])))
-            y_slope.append(_bucket_slope(float(row["slope_deg"])))
-            y_curv.append(_bucket_curv(float(row["curv_deg"])))
-            y_breaks.append(_bucket_breaks(int(row["breaks"])))
-
-    return (np.array(X),
-            np.array(y_line), np.array(y_len), np.array(y_slope),
-            np.array(y_curv), np.array(y_breaks))
-
-def build_model():
-    inp = keras.Input(shape=(IMG_SIZE*IMG_SIZE,), name="pixels")
-    # ANN thuần Dense-only:
-    x = layers.Dense(1024, activation="relu")(inp)
-    x = layers.Dense(512, activation="relu")(x)
-    x = layers.Dense(256, activation="relu")(x)
-    # 5 đầu ra (multi-head)
-    line_type  = layers.Dense(4, activation="softmax", name="line_type")(x)
-    length_cls = layers.Dense(3, activation="softmax", name="length_cls")(x)
-    slope_cls  = layers.Dense(3, activation="softmax", name="slope_cls")(x)
-    curv_cls   = layers.Dense(3, activation="softmax", name="curv_cls")(x)
-    breaks_cls = layers.Dense(3, activation="softmax", name="breaks_cls")(x)
-
-    model = keras.Model(inp, [line_type, length_cls, slope_cls, curv_cls, breaks_cls])
-    model.compile(
-        optimizer=keras.optimizers.Adam(1e-3),
-        loss={
-            "line_type":  "sparse_categorical_crossentropy",
-            "length_cls": "sparse_categorical_crossentropy",
-            "slope_cls":  "sparse_categorical_crossentropy",
-            "curv_cls":   "sparse_categorical_crossentropy",
-            "breaks_cls": "sparse_categorical_crossentropy",
-        },
-        metrics={k: "accuracy" for k in ["line_type","length_cls","slope_cls","curv_cls","breaks_cls"]}
-    )
-    return model
+class PalmistryANNTrainer:
+    def __init__(self, data_path, output_path):
+        self.data_path = data_path
+        self.output_path = output_path
+        self.model = None
+        
+        # Palm reading attributes with detailed descriptions
+        self.palm_attributes = {
+            'fate': {
+                'name': 'Đường Số Phận',
+                'description': 'Cuộc đời bấp bênh, nhiều thay đổi, có nhiều cơ hội nhưng cần biết nắm bắt',
+                'characteristics': ['Thay đổi nhiều', 'Bấp bênh', 'Cần kiên trì']
+            },
+            'head': {
+                'name': 'Đường Trí Tuệ',
+                'description': 'Thần kinh vững vàng, sáng suốt, ít bệnh tật, có khả năng tư duy tốt',
+                'characteristics': ['Sáng suốt', 'Vững vàng', 'Ít bệnh tật']
+            },
+            'heart': {
+                'name': 'Đường Cảm Tình',
+                'description': 'Tình cảm rộng rãi, cởi mở, hòa đồng, có lòng nhân từ và hảo tâm',
+                'characteristics': ['Cởi mở', 'Hòa đồng', 'Nhân từ']
+            },
+            'life': {
+                'name': 'Đường Sinh Mệnh',
+                'description': 'Sức sống dồi dào, sức khỏe tốt, độ lượng hào phóng, tự tin',
+                'characteristics': ['Sức khỏe tốt', 'Hào phóng', 'Tự tin']
+            }
+        }
+    
+    def load_data(self):
+        """Load preprocessed data"""
+        print("Loading preprocessed data...")
+        
+        X_train = np.load(os.path.join(self.data_path, 'train', 'X_train.npy'))
+        y_train = np.load(os.path.join(self.data_path, 'train', 'y_train.npy'))
+        X_val = np.load(os.path.join(self.data_path, 'valid', 'X_val.npy'))
+        y_val = np.load(os.path.join(self.data_path, 'valid', 'y_val.npy'))
+        
+        # Load label encoder
+        with open(os.path.join(self.data_path, 'label_encoder.pkl'), 'rb') as f:
+            self.label_encoder = pickle.load(f)
+        
+        self.num_classes = len(self.label_encoder.classes_)
+        
+        # Convert labels to categorical
+        y_train_cat = to_categorical(y_train, self.num_classes)
+        y_val_cat = to_categorical(y_val, self.num_classes)
+        
+        print(f"Training data shape: {X_train.shape}")
+        print(f"Validation data shape: {X_val.shape}")
+        print(f"Number of classes: {self.num_classes}")
+        print(f"Classes: {list(self.label_encoder.classes_)}")
+        
+        return X_train, y_train_cat, X_val, y_val_cat
+    
+    def create_model(self, input_shape):
+        """Create ANN model with only Dense layers"""
+        model = Sequential([
+            # Input layer
+            Dense(512, activation='relu', input_shape=input_shape, name='dense_1'),
+            
+            # Hidden layers
+            Dense(256, activation='relu', name='dense_2'),
+            Dense(128, activation='relu', name='dense_3'),
+            Dense(64, activation='relu', name='dense_4'),
+            Dense(32, activation='relu', name='dense_5'),
+            
+            # Output layer
+            Dense(self.num_classes, activation='softmax', name='output')
+        ])
+        
+        return model
+    
+    def compile_model(self, model):
+        """Compile the model"""
+        model.compile(
+            optimizer=Adam(learning_rate=0.001),
+            loss='categorical_crossentropy',
+            metrics=['accuracy']
+        )
+        
+        return model
+    
+    def train_model(self, X_train, y_train, X_val, y_val, epochs=100):
+        """Train the model"""
+        print("Creating and compiling model...")
+        
+        # Create model
+        input_shape = (X_train.shape[1],)
+        self.model = self.create_model(input_shape)
+        self.model = self.compile_model(self.model)
+        
+        # Print model summary
+        print("\nModel Architecture:")
+        self.model.summary()
+        
+        # Setup callbacks
+        os.makedirs(self.output_path, exist_ok=True)
+        
+        callbacks = [
+            EarlyStopping(
+                monitor='val_loss',
+                patience=10,
+                restore_best_weights=True,
+                verbose=1
+            ),
+            ModelCheckpoint(
+                filepath=os.path.join(self.output_path, 'best_model.h5'),
+                monitor='val_accuracy',
+                save_best_only=True,
+                verbose=1
+            )
+        ]
+        
+        print("\nStarting training...")
+        
+        # Train model
+        history = self.model.fit(
+            X_train, y_train,
+            validation_data=(X_val, y_val),
+            epochs=epochs,
+            batch_size=32,
+            callbacks=callbacks,
+            verbose=1
+        )
+        
+        return history
+    
+    def save_model_artifacts(self):
+        """Save model and related files"""
+        print("Saving model artifacts...")
+        
+        # Save final model
+        self.model.save(os.path.join(self.output_path, 'model.h5'))
+        
+        # Create labels.txt file
+        labels_path = os.path.join(self.output_path, 'labels.txt')
+        with open(labels_path, 'w', encoding='utf-8') as f:
+            for label in self.label_encoder.classes_:
+                f.write(f"{label}\n")
+        
+        # Create attr_config.json file
+        attr_config = {
+            'model_info': {
+                'model_type': 'ANN',
+                'input_shape': [224, 224, 3],
+                'num_classes': self.num_classes,
+                'classes': list(self.label_encoder.classes_)
+            },
+            'palm_attributes': self.palm_attributes,
+            'preprocessing': {
+                'image_size': [224, 224],
+                'normalization': 'divide_by_255',
+                'flatten': True
+            }
+        }
+        
+        attr_config_path = os.path.join(self.output_path, 'attr_config.json')
+        with open(attr_config_path, 'w', encoding='utf-8') as f:
+            json.dump(attr_config, f, ensure_ascii=False, indent=4)
+        
+        print(f"Model saved to: {os.path.join(self.output_path, 'model.h5')}")
+        print(f"Labels saved to: {labels_path}")
+        print(f"Config saved to: {attr_config_path}")
+    
+    def plot_training_history(self, history):
+        """Plot training history"""
+        plt.figure(figsize=(12, 4))
+        
+        # Plot accuracy
+        plt.subplot(1, 2, 1)
+        plt.plot(history.history['accuracy'], label='Training Accuracy')
+        plt.plot(history.history['val_accuracy'], label='Validation Accuracy')
+        plt.title('Model Accuracy')
+        plt.xlabel('Epoch')
+        plt.ylabel('Accuracy')
+        plt.legend()
+        
+        # Plot loss
+        plt.subplot(1, 2, 2)
+        plt.plot(history.history['loss'], label='Training Loss')
+        plt.plot(history.history['val_loss'], label='Validation Loss')
+        plt.title('Model Loss')
+        plt.xlabel('Epoch')
+        plt.ylabel('Loss')
+        plt.legend()
+        
+        plt.tight_layout()
+        plt.savefig(os.path.join(self.output_path, 'training_history.png'))
+        plt.show()
+    
+    def evaluate_model(self):
+        """Evaluate model on test set"""
+        if os.path.exists(os.path.join(self.data_path, 'test', 'X_test.npy')):
+            print("Evaluating on test set...")
+            
+            X_test = np.load(os.path.join(self.data_path, 'test', 'X_test.npy'))
+            y_test = np.load(os.path.join(self.data_path, 'test', 'y_test.npy'))
+            y_test_cat = to_categorical(y_test, self.num_classes)
+            
+            test_loss, test_accuracy = self.model.evaluate(X_test, y_test_cat, verbose=1)
+            print(f"Test Accuracy: {test_accuracy:.4f}")
+            print(f"Test Loss: {test_loss:.4f}")
+            
+            return test_accuracy, test_loss
+        else:
+            print("No test data found.")
+            return None, None
 
 def main():
-    print("==> Loading data from", DATA_ROOT)
-    Xtr, ylt_tr, ylen_tr, ys_tr, yc_tr, yb_tr = load_images_and_attrs("train")
-    Xval, ylt_val, ylen_val, ys_val, yc_val, yb_val = load_images_and_attrs("val")
-    Xte,  ylt_te,  ylen_te,  ys_te,  yc_te,  yb_te  = load_images_and_attrs("test")
-
-    if Xtr.size == 0:
-        raise RuntimeError(f"Không tìm thấy dữ liệu train trong {DATA_ROOT}. Hãy chạy scripts/polylines_to_crops_attrs.py trước.")
-
-    model = build_model()
-    model.summary()
-
-    callbacks=[]
-    if Xval.size>0:
-        callbacks = [
-            keras.callbacks.ReduceLROnPlateau(monitor="val_line_type_accuracy", factor=0.5, patience=3, verbose=1),
-            keras.callbacks.EarlyStopping(monitor="val_line_type_accuracy", patience=6, restore_best_weights=True, verbose=1)
-        ]
-
-    print("==> Training ...")
-    model.fit(
-        Xtr, {"line_type": ylt_tr, "length_cls": ylen_tr, "slope_cls": ys_tr, "curv_cls": yc_tr, "breaks_cls": yb_tr},
-        validation_data=(Xval, {"line_type": ylt_val, "length_cls": ylen_val, "slope_cls": ys_val, "curv_cls": yc_val, "breaks_cls": yb_val}) if Xval.size>0 else None,
-        epochs=EPOCHS, batch_size=BATCH, callbacks=callbacks, verbose=2
-    )
-
-    if Xte.size>0:
-        print("==> Evaluating on test ...")
-        metrics = model.evaluate(
-            Xte, {"line_type": ylt_te, "length_cls": ylen_te, "slope_cls": ys_te, "curv_cls": yc_te, "breaks_cls": yb_te},
-            verbose=0
-        )
-        print("Test metrics:", metrics)
-
-    os.makedirs(OUT_DIR, exist_ok=True)
-    model.save(os.path.join(OUT_DIR, "model.h5"))
-    with open(os.path.join(OUT_DIR, "labels.txt"), "w", encoding="utf-8") as f:
-        f.write("\n".join(CLS_NAMES))
-
-    # ghi cấu hình buckets để app.py hiểu
-    attr_cfg = {
-        "line_type":  CLS_NAMES,
-        "length_cls": ["short","medium","long"],
-        "slope_cls":  ["down","flat","up"],
-        "curv_cls":   ["low","medium","high"],
-        "breaks_cls": ["none","one","many"],
-        "thresholds": {
-            "length_norm": LEN_THRESH,
-            "slope_deg":   SLOPE_THR,
-            "curv_deg":    CURV_THR
-        }
-    }
-    with open(os.path.join(OUT_DIR, "attr_config.json"), "w", encoding="utf-8") as f:
-        json.dump(attr_cfg, f, ensure_ascii=False, indent=2)
-
-    print(f"==> Saved to {OUT_DIR}/model.h5, {OUT_DIR}/labels.txt, {OUT_DIR}/attr_config.json")
+    # Configure paths
+    DATA_PATH = "data"
+    OUTPUT_PATH = "model"
+    
+    # Initialize trainer
+    trainer = PalmistryANNTrainer(DATA_PATH, OUTPUT_PATH)
+    
+    try:
+        # Load data
+        X_train, y_train, X_val, y_val = trainer.load_data()
+        
+        # Train model
+        history = trainer.train_model(X_train, y_train, X_val, y_val, epochs=100)
+        
+        # Save model artifacts
+        trainer.save_model_artifacts()
+        
+        # Plot training history
+        trainer.plot_training_history(history)
+        
+        # Evaluate model
+        trainer.evaluate_model()
+        
+        print("\nTraining completed successfully!")
+        print("Files generated:")
+        print("- model/model.h5")
+        print("- model/labels.txt") 
+        print("- model/attr_config.json")
+        
+    except Exception as e:
+        print(f"Error during training: {str(e)}")
+        raise
 
 if __name__ == "__main__":
     main()
