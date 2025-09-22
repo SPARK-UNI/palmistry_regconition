@@ -1,6 +1,6 @@
 # Bỏ toàn bộ dữ liệu train/val/test và processed
 /data/raw/*
-/data/processed/*
+/data/*
 
 # Nhưng vẫn giữ lại cấu trúc thư mục
 !data/raw/.gitkeep
