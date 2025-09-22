@@ -1,0 +1,5 @@
+tensorflow==2.15.0
+tensorflowjs==4.21.0
+numpy
+pillow
+scikit-learn

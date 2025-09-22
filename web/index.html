@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Xem Bói Chỉ Tay AI - Dự Đoán Tương Lai</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🔮 Xem Bói Chỉ Tay AI</h1>
+            <p>Khám phá tương lai qua đường chỉ tay với trí tuệ nhân tạo</p>
+        </div>
+
+        <div class="main-content">
+            <div class="card upload-section">
+                <h3>📸 Tải Ảnh Bàn Tay</h3>
+                
+                <div class="upload-area" id="uploadArea">
+                    <div class="upload-icon">🤚</div>
+                    <div class="upload-text">Kéo thả ảnh vào đây hoặc nhấp để chọn</div>
+                    <div class="upload-hint">Hỗ trợ: JPG, PNG, WebP (tối đa 10MB)</div>
+                </div>
+                
+                <input type="file" id="fileInput" class="file-input" accept="image/*">
+                
+                <div class="button-group">
+                    <button class="btn" id="uploadBtn">
+                        📁 Chọn Ảnh
+                    </button>
+                    <button class="btn btn-camera" id="cameraBtn">
+                        📷 Chụp Ảnh
+                    </button>
+                </div>
+
+                <div class="preview-container">
+                    <img id="previewImage" class="preview-image" alt="Preview">
+                </div>
+
+                <div class="line-selector">
+                    <h4>Chọn đường chỉ tay để phân tích:</h4>
+                    <div class="line-options">
+                        <div class="line-option selected" data-line="life">
+                            <h4>🌱 Đường Sống</h4>
+                            <p>Sức khỏe & tuổi thọ</p>
+                        </div>
+                        <div class="line-option" data-line="heart">
+                            <h4>❤️ Đường Tình</h4>
+                            <p>Tình yêu & cảm xúc</p>
+                        </div>
+                        <div class="line-option" data-line="head">
+                            <h4>🧠 Đường Trí</h4>
+                            <p>Trí tuệ & sự nghiệp</p>
+                        </div>
+                        <div class="line-option" data-line="fate">
+                            <h4>🌟 Đường Vận Mệnh</h4>
+                            <p>Số phận & tương lai</p>
+                        </div>
+                    </div>
+                </div>
+
+                <button class="btn" id="analyzeBtn" disabled>
+                    🔍 Phân Tích & Dự Đoán
+                </button>
+            </div>
+
+            <div class="card results-section">
+                <h3>📊 Kết Quả Phân Tích</h3>
+                
+                <div class="loading" id="loading">
+                    <div class="loading-spinner"></div>
+                    <p>Đang phân tích chỉ tay của bạn...</p>
+                    <p style="font-size: 0.9rem; opacity: 0.7;">AI đang đọc vị các đường chỉ tay</p>
+                </div>
+
+                <div class="result-content" id="resultContent">
+                    <div class="prediction-card">
+                        <h4 class="prediction-title">Chưa có kết quả</h4>
+                        <p class="prediction-text">Vui lòng tải ảnh bàn tay và chọn đường chỉ để phân tích</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="disclaimer">
+            <p>⚠️ <strong>Lưu ý:</strong> Đây là ứng dụng giải trí sử dụng AI. Kết quả không có giá trị khoa học hay dự đoán chính xác về tương lai. Chỉ mang tính chất tham khảo và giải trí.</p>
+        </div>
+    </div>
+
+    <!-- Camera Modal -->
+    <div class="camera-modal" id="cameraModal">
+        <div class="camera-container">
+            <video id="cameraVideo" class="camera-video" autoplay></video>
+            <canvas id="cameraCanvas" style="display: none;"></canvas>
+            <div class="camera-controls">
+                <button class="btn" id="captureBtn">📸 Chụp</button>
+                <button class="btn" id="closeCameraBtn">❌ Đóng</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>

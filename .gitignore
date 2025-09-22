@@ -1,0 +1,21 @@
+# Bỏ toàn bộ dữ liệu train/val/test và processed
+/data/raw/*
+/data/processed/*
+
+# Nhưng vẫn giữ lại cấu trúc thư mục
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+
+# Nếu có file mẫu JSON để tham khảo (ví dụ annotation dummy), thì bỏ dấu #:
+# !data/raw/example/_annotations.coco.json
+
+/model/*
+!model/.gitkeep
+
+# Các file hệ thống / IDE
+*.pyc
+__pycache__/
+.DS_Store
+.vscode/
+.idea/
+
